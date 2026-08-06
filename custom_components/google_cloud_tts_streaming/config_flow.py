@@ -1,31 +1,32 @@
 """Config flow for Google Cloud TTS (Streaming) integration."""
+
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import voluptuous as vol
+from google.oauth2 import service_account
 from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 
 from .const import (
-    DOMAIN,
     CONF_KEY_FILE,
-    CONF_VOICE,
     CONF_SPEED,
-    DEFAULT_VOICE,
+    CONF_VOICE,
     DEFAULT_SPEED,
+    DEFAULT_VOICE,
+    DOMAIN,
 )
+from .helpers import parse_service_account_json
+
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Google Cloud TTS (Streaming)."""
 
     VERSION = 1
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle the initial step."""
         if self._async_current_entries():
             return self.async_abort(reason="already_configured")
@@ -33,12 +34,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
-                # Validate JSON
-                json.loads(user_input[CONF_KEY_FILE])
+                key_info = parse_service_account_json(user_input[CONF_KEY_FILE])
+                service_account.Credentials.from_service_account_info(key_info)
                 return self.async_create_entry(title="Google Cloud TTS", data=user_input)
-            except ValueError:
+            except (TypeError, ValueError, KeyError):
                 errors["base"] = "invalid_auth"
-            except Exception:
+            except Exception:  # pragma: no cover - SDK-specific credential errors
                 errors["base"] = "unknown"
 
         return self.async_show_form(
@@ -63,9 +64,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class OptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options."""
 
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Manage the options."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
@@ -77,11 +76,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Optional(
                         CONF_VOICE,
                         default=self.config_entry.options.get(CONF_VOICE, DEFAULT_VOICE),
-                    ): str,
+                    ): vol.All(str, vol.Length(min=1)),
                     vol.Optional(
                         CONF_SPEED,
                         default=self.config_entry.options.get(CONF_SPEED, DEFAULT_SPEED),
-                    ): vol.Coerce(float),
+                    ): vol.All(vol.Coerce(float), vol.Range(min=0.25, max=4.0)),
                 }
             ),
         )
