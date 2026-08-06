@@ -1,14 +1,13 @@
 """Support for the Google Cloud TTS (Streaming) service."""
+
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import struct
+import queue
+
 from google.cloud import texttospeech
 from google.oauth2 import service_account
-from google.api_core.exceptions import GoogleAPIError
-
 from homeassistant.components.tts import (
     TextToSpeechEntity,
     TTSAudioRequest,
@@ -19,26 +18,33 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
-    DOMAIN,
-    CONF_KEY_FILE,
-    CONF_VOICE,
     CONF_SPEED,
-    DEFAULT_VOICE,
+    CONF_VOICE,
     DEFAULT_SAMPLE_RATE,
     DEFAULT_SPEED,
+    DEFAULT_VOICE,
+    DOMAIN,
     TIMEOUT,
 )
+from .helpers import build_wav_header, language_code_from_voice, parse_service_account_json
 
 _LOGGER = logging.getLogger(__name__)
 
+
+def create_client(key_file: str) -> texttospeech.TextToSpeechClient:
+    """Create a Google Cloud TTS client from the configured service account."""
+    key_info = parse_service_account_json(key_file)
+    credentials = service_account.Credentials.from_service_account_info(key_info)
+    return texttospeech.TextToSpeechClient(credentials=credentials)
+
+
 def _get_next(iterator):
+    """Read one response from the blocking Google iterator."""
     try:
         return next(iterator)
     except StopIteration:
         return None
-    except Exception as e:
-        _LOGGER.error("[TTS_STREAMING] Error fetching next streaming response: %s", e)
-        return None
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -46,7 +52,8 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Google Cloud TTS (Streaming) platform."""
-    async_add_entities([GoogleCloudStreamingTTSEntity(config_entry)])
+    client = hass.data[DOMAIN][config_entry.entry_id]
+    async_add_entities([GoogleCloudStreamingTTSEntity(config_entry, client)])
 
 
 class GoogleCloudStreamingTTSEntity(TextToSpeechEntity):
@@ -55,28 +62,22 @@ class GoogleCloudStreamingTTSEntity(TextToSpeechEntity):
     _attr_has_entity_name = True
     _attr_name = "Google Cloud TTS (Streaming)"
 
-    def __init__(self, config_entry: ConfigEntry) -> None:
+    def __init__(self, config_entry: ConfigEntry, client: texttospeech.TextToSpeechClient) -> None:
         """Initialize the entity."""
         self._config_entry = config_entry
         self._attr_unique_id = config_entry.entry_id
-
-        try:
-            key_info = json.loads(self._config_entry.data[CONF_KEY_FILE])
-            self._credentials = service_account.Credentials.from_service_account_info(key_info)
-            self._client = texttospeech.TextToSpeechClient(credentials=self._credentials)
-        except Exception as e:
-            _LOGGER.error("Failed to initialize Google Cloud TTS client: %s", e)
-            self._client = None
+        self._client = client
 
     @property
     def supported_languages(self) -> list[str]:
         """Return list of supported languages."""
-        return ["en"]
+        voice_name = self._config_entry.options.get(CONF_VOICE, DEFAULT_VOICE)
+        return [language_code_from_voice(voice_name)]
 
     @property
     def default_language(self) -> str:
         """Return the default language."""
-        return "en"
+        return self.supported_languages[0]
 
     @property
     def supported_options(self) -> list[str]:
@@ -88,69 +89,76 @@ class GoogleCloudStreamingTTSEntity(TextToSpeechEntity):
         """Return whether streaming is supported."""
         return True
 
-    async def async_stream_tts_audio(
-        self, request: TTSAudioRequest
-    ) -> TTSAudioResponse | None:
+    async def async_stream_tts_audio(self, request: TTSAudioRequest) -> TTSAudioResponse | None:
         """Stream TTS audio."""
-        if not self._client:
-            _LOGGER.error("[TTS_STREAMING] TTS Client not initialized")
-            return None
+        message_iterator = request.message_gen.__aiter__()
+        first_chunk = None
+        while first_chunk is None or not first_chunk.strip():
+            try:
+                first_chunk = await anext(message_iterator)
+            except StopAsyncIteration:
+                first_chunk = None
+                break
 
-        message_chunks = [chunk async for chunk in request.message_gen]
-        message = "".join(message_chunks).strip()
-        if not message:
+        if first_chunk is None:
             _LOGGER.warning("[TTS_STREAMING] Empty message received")
             return None
 
-        _LOGGER.warning("[TTS_STREAMING] Synthesizing message: %s", message)
+        _LOGGER.debug("Starting TTS synthesis after receiving the first input chunk")
 
         options = self._config_entry.options
         voice_name = options.get(CONF_VOICE, DEFAULT_VOICE)
         speed = options.get(CONF_SPEED, DEFAULT_SPEED)
-        lang_code = "-".join(voice_name.split("-")[:2]) if "-" in voice_name else "en-US"
+        lang_code = getattr(request, "language", None) or language_code_from_voice(voice_name)
 
-        reqs = [
-            texttospeech.StreamingSynthesizeRequest(
-                streaming_config=texttospeech.StreamingSynthesizeConfig(
-                    streaming_audio_config=texttospeech.StreamingAudioConfig(
-                        audio_encoding=texttospeech.AudioEncoding.PCM,
-                        sample_rate_hertz=DEFAULT_SAMPLE_RATE,
-                        speaking_rate=speed,
-                    ),
-                    voice=texttospeech.VoiceSelectionParams(
-                        language_code=lang_code,
-                        name=voice_name,
-                    )
-                )
-            ),
-            texttospeech.StreamingSynthesizeRequest(
-                input=texttospeech.StreamingSynthesisInput(text=message)
+        streaming_config = texttospeech.StreamingSynthesizeRequest(
+            streaming_config=texttospeech.StreamingSynthesizeConfig(
+                streaming_audio_config=texttospeech.StreamingAudioConfig(
+                    audio_encoding=texttospeech.AudioEncoding.PCM,
+                    sample_rate_hertz=DEFAULT_SAMPLE_RATE,
+                    speaking_rate=speed,
+                ),
+                voice=texttospeech.VoiceSelectionParams(
+                    language_code=lang_code,
+                    name=voice_name,
+                ),
             )
-        ]
+        )
+
+        async def input_chunks():
+            """Yield the first chunk and then the remaining HA input."""
+            yield first_chunk
+            async for chunk in message_iterator:
+                if chunk:
+                    yield chunk
 
         async def audio_generator():
-            # 44-byte WAV header for the configured 16-bit mono PCM stream.
-            header = (
-                b"RIFF"
-                + struct.pack("<I", 0x7FFFFFFF)
-                + b"WAVEfmt "
-                + struct.pack(
-                    "<IHHIIHH",
-                    16,
-                    1,
-                    1,
-                    DEFAULT_SAMPLE_RATE,
-                    DEFAULT_SAMPLE_RATE * 2,
-                    2,
-                    16,
-                )
-                + b"data"
-                + struct.pack("<I", 0x7FFFFFFF)
-            )
-            yield header
+            """Bridge async Home Assistant input to Google's blocking API."""
+            yield build_wav_header(DEFAULT_SAMPLE_RATE)
+            chunks: queue.Queue[str | None] = queue.Queue()
+
+            async def feed_input() -> None:
+                try:
+                    async for chunk in input_chunks():
+                        chunks.put(chunk)
+                finally:
+                    chunks.put(None)
+
+            producer = asyncio.create_task(feed_input())
+
+            def request_iterator():
+                yield streaming_config
+                while (chunk := chunks.get()) is not None:
+                    yield texttospeech.StreamingSynthesizeRequest(
+                        input=texttospeech.StreamingSynthesisInput(text=chunk)
+                    )
 
             try:
-                responses = self._client.streaming_synthesize(requests=iter(reqs), timeout=TIMEOUT)
+                responses = await asyncio.to_thread(
+                    self._client.streaming_synthesize,
+                    requests=request_iterator(),
+                    timeout=TIMEOUT,
+                )
                 chunks_count = 0
                 total_bytes = 0
 
@@ -163,15 +171,16 @@ class GoogleCloudStreamingTTSEntity(TextToSpeechEntity):
                         total_bytes += len(r.audio_content)
                         yield r.audio_content
 
-                _LOGGER.warning("[TTS_STREAMING] Streaming complete: %d chunks, %d bytes", chunks_count, total_bytes)
-            except GoogleAPIError as e:
-                _LOGGER.error("[TTS_STREAMING] Google Cloud TTS API Error: %s", e)
+                _LOGGER.debug("Streaming complete: %d chunks, %d bytes", chunks_count, total_bytes)
+            except Exception:
+                _LOGGER.exception("Google Cloud TTS streaming failed")
                 raise
-            except Exception as e:
-                _LOGGER.error("[TTS_STREAMING] Google Cloud TTS Error: %s", e)
-                raise
+            finally:
+                if not producer.done():
+                    producer.cancel()
+                try:
+                    await producer
+                except asyncio.CancelledError:
+                    pass
 
-        return TTSAudioResponse(
-            "wav",
-            audio_generator()
-        )
+        return TTSAudioResponse("wav", audio_generator())
