@@ -1,0 +1,12 @@
+{
+  "domain": "google_cloud_tts_streaming",
+  "name": "Google Cloud TTS (Streaming)",
+  "codeowners": ["@anarghyamitra"],
+  "config_flow": true,
+  "dependencies": ["tts"],
+  "documentation": "https://github.com/amitra93/ha-google-cloud-tts-streaming",
+  "integration_type": "service",
+  "iot_class": "cloud_push",
+  "requirements": ["google-cloud-texttospeech>=2.14.1"],
+  "version": "2026.8.1"
+}

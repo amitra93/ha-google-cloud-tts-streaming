@@ -1,0 +1,34 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Google Cloud TTS (Streaming)",
+        "description": "Provide your Google Cloud service account JSON key.",
+        "data": {
+          "key_file": "Service Account JSON Key (Paste content)"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid authentication",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "Device is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Configure Voice Options",
+        "data": {
+          "voice": "Voice Name",
+          "speed": "Speaking Rate",
+          "pitch": "Pitch",
+          "gain": "Volume Gain (dB)",
+          "profiles": "Audio Effects Profiles"
+        }
+      }
+    }
+  }
+}

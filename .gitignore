@@ -216,3 +216,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Google Cloud credentials
+.secrets/
+credentials*.json
+*-credentials.json
+*-service-account.json
+*.pem
+*.p12
+*.key
