@@ -5,8 +5,6 @@ import asyncio
 import json
 import logging
 import struct
-from typing import AsyncIterable, Any
-
 from google.cloud import texttospeech
 from google.oauth2 import service_account
 from google.api_core.exceptions import GoogleAPIError
@@ -25,14 +23,9 @@ from .const import (
     CONF_KEY_FILE,
     CONF_VOICE,
     CONF_SPEED,
-    CONF_PITCH,
-    CONF_GAIN,
-    CONF_PROFILES,
     DEFAULT_VOICE,
+    DEFAULT_SAMPLE_RATE,
     DEFAULT_SPEED,
-    DEFAULT_PITCH,
-    DEFAULT_GAIN,
-    DEFAULT_PROFILES,
     TIMEOUT,
 )
 
@@ -114,8 +107,6 @@ class GoogleCloudStreamingTTSEntity(TextToSpeechEntity):
         options = self._config_entry.options
         voice_name = options.get(CONF_VOICE, DEFAULT_VOICE)
         speed = options.get(CONF_SPEED, DEFAULT_SPEED)
-        pitch = options.get(CONF_PITCH, DEFAULT_PITCH)
-        gain = options.get(CONF_GAIN, DEFAULT_GAIN)
         lang_code = "-".join(voice_name.split("-")[:2]) if "-" in voice_name else "en-US"
 
         reqs = [
@@ -123,7 +114,8 @@ class GoogleCloudStreamingTTSEntity(TextToSpeechEntity):
                 streaming_config=texttospeech.StreamingSynthesizeConfig(
                     streaming_audio_config=texttospeech.StreamingAudioConfig(
                         audio_encoding=texttospeech.AudioEncoding.PCM,
-                        sample_rate_hertz=24000,
+                        sample_rate_hertz=DEFAULT_SAMPLE_RATE,
+                        speaking_rate=speed,
                     ),
                     voice=texttospeech.VoiceSelectionParams(
                         language_code=lang_code,
@@ -137,12 +129,21 @@ class GoogleCloudStreamingTTSEntity(TextToSpeechEntity):
         ]
 
         async def audio_generator():
-            # 44-byte WAV header for 24kHz 16-bit Mono PCM
+            # 44-byte WAV header for the configured 16-bit mono PCM stream.
             header = (
                 b"RIFF"
                 + struct.pack("<I", 0x7FFFFFFF)
                 + b"WAVEfmt "
-                + struct.pack("<IHHIIHH", 16, 1, 1, 24000, 48000, 2, 16)
+                + struct.pack(
+                    "<IHHIIHH",
+                    16,
+                    1,
+                    1,
+                    DEFAULT_SAMPLE_RATE,
+                    DEFAULT_SAMPLE_RATE * 2,
+                    2,
+                    16,
+                )
                 + b"data"
                 + struct.pack("<I", 0x7FFFFFFF)
             )

@@ -14,14 +14,8 @@ from .const import (
     CONF_KEY_FILE,
     CONF_VOICE,
     CONF_SPEED,
-    CONF_PITCH,
-    CONF_GAIN,
-    CONF_PROFILES,
     DEFAULT_VOICE,
     DEFAULT_SPEED,
-    DEFAULT_PITCH,
-    DEFAULT_GAIN,
-    DEFAULT_PROFILES,
 )
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -88,20 +82,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         CONF_SPEED,
                         default=self.config_entry.options.get(CONF_SPEED, DEFAULT_SPEED),
                     ): vol.Coerce(float),
-                    vol.Optional(
-                        CONF_PITCH,
-                        default=self.config_entry.options.get(CONF_PITCH, DEFAULT_PITCH),
-                    ): vol.Coerce(float),
-                    vol.Optional(
-                        CONF_GAIN,
-                        default=self.config_entry.options.get(CONF_GAIN, DEFAULT_GAIN),
-                    ): vol.Coerce(float),
-                    vol.Optional(
-                        CONF_PROFILES,
-                        default=self.config_entry.options.get(
-                            CONF_PROFILES, ""
-                        ),
-                    ): str,
                 }
             ),
         )

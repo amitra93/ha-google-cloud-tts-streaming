@@ -23,7 +23,7 @@ commit a credential file or paste credential contents into this repository.
 
 - Google Cloud Text-to-Speech streaming synthesis
 - Streaming WAV audio output
-- An options flow exposing voice, speaking rate, pitch, gain, and audio profiles
+- An options flow exposing voice and speaking rate
 
 ## Requirements
 

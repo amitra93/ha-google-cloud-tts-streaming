@@ -225,3 +225,7 @@ credentials*.json
 *.pem
 *.p12
 *.key
+
+# Python bytecode
+__pycache__/
+*.py[cod]

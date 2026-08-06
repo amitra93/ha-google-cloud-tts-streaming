@@ -23,10 +23,7 @@
         "title": "Configure Voice Options",
         "data": {
           "voice": "Voice Name",
-          "speed": "Speaking Rate",
-          "pitch": "Pitch",
-          "gain": "Volume Gain (dB)",
-          "profiles": "Audio Effects Profiles"
+          "speed": "Speaking Rate"
         }
       }
     }
